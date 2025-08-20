@@ -37,32 +37,8 @@ Rules:
 """
 
 # ---- Functions ----
-def download_video(youtube_url):
-    """Download video from YouTube."""
-    global current_video_path
-    
-    if not youtube_url:
-        return "❌ Please enter a YouTube URL", None
-    
-    try:
-        download_dir = Path("downloads")
-        download_dir.mkdir(exist_ok=True)
-        
-        opts = {
-            'format': 'best[ext=mp4]',
-            'outtmpl': str(download_dir / "%(title)s.%(ext)s"),
-        }
-        
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(youtube_url, download=True)
-            filepath = Path(ydl.prepare_filename(info))
-            current_video_path = str(filepath)
-            return f"✅ Downloaded: {filepath.name}", str(filepath)
-    except Exception as e:
-        return f"❌ Error downloading: {e}", None
-
-def extract_clips(youtube_url, num_clips=5, min_dur=5, max_dur=10):
-    """Extract clip suggestions using Gemini."""
+def analyze_video_with_gemini(youtube_url, num_clips=5, min_dur=5, max_dur=10):
+    """Step 1: Analyze YouTube video with Gemini to get clip suggestions."""
     global clip_suggestions
     
     try:
@@ -88,16 +64,31 @@ def extract_clips(youtube_url, num_clips=5, min_dur=5, max_dur=10):
     except Exception as e:
         return f"Error: {e}"
 
-def create_clips():
-    """Create actual video clips from suggestions."""
+def extract_clips(youtube_url):
+    """Step 2: Download video and create clips from Gemini suggestions."""
     global current_video_path, clip_suggestions
     
-    if not current_video_path:
-        return "❌ No video downloaded. Please download video first.", []
-    
     if not clip_suggestions:
-        return "❌ No clip suggestions. Please extract clips first.", []
+        return "❌ No clip suggestions found. Please analyze video with Gemini first.", []
     
+    # First download the video
+    try:
+        download_dir = Path("downloads")
+        download_dir.mkdir(exist_ok=True)
+        
+        opts = {
+            'format': 'best[ext=mp4]',
+            'outtmpl': str(download_dir / "%(title)s.%(ext)s"),
+        }
+        
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(youtube_url, download=True)
+            filepath = Path(ydl.prepare_filename(info))
+            current_video_path = str(filepath)
+    except Exception as e:
+        return f"❌ Error downloading video: {e}", []
+    
+    # Then create clips from suggestions
     clips_dir = Path("downloads/clips")
     clips_dir.mkdir(exist_ok=True)
     
@@ -141,7 +132,7 @@ def create_clips():
         except Exception as e:
             errors.append(f"Clip {i+1}: {e}")
     
-    result_text = f"✅ Created {len(created_clips)} clips successfully!\n\n"
+    result_text = f"✅ Downloaded video and created {len(created_clips)} clips successfully!\n\n"
     if errors:
         result_text += f"❌ Errors ({len(errors)}):\n"
         for error in errors:
@@ -165,14 +156,12 @@ with gr.Blocks() as demo:
             
             # Buttons
             with gr.Row():
-                download_btn = gr.Button("📥 Download Video", variant="secondary")
-                extract_btn = gr.Button("🧠 Extract Hooks", variant="primary")
-                create_btn = gr.Button("✂️ Create Clips", variant="primary")
+                analyze_btn = gr.Button("🧠 Analyze with Gemini", variant="primary")
+                extract_btn = gr.Button("✂️ Extract Clips", variant="primary")
             
             # Status outputs
-            download_status = gr.Textbox(label="Download Status", lines=2)
-            extract_output = gr.Textbox(label="Extracted Clips JSON", lines=10)
-            create_status = gr.Textbox(label="Clip Creation Status", lines=5)
+            analyze_output = gr.Textbox(label="Gemini Analysis Results", lines=10)
+            extract_status = gr.Textbox(label="Clip Extraction Status", lines=5)
         
         with gr.Column(scale=1):
             gr.Markdown("### 🎥 Created Clips")
@@ -186,21 +175,16 @@ with gr.Blocks() as demo:
             )
     
     # Connect functions
-    download_btn.click(
-        download_video,
-        inputs=youtube_url,
-        outputs=[download_status, gr.State()]
+    analyze_btn.click(
+        analyze_video_with_gemini,
+        inputs=[youtube_url, num_clips, min_dur, max_dur],
+        outputs=analyze_output
     )
     
     extract_btn.click(
         extract_clips,
-        inputs=[youtube_url, num_clips, min_dur, max_dur],
-        outputs=extract_output
-    )
-    
-    create_btn.click(
-        create_clips,
-        outputs=[create_status, clips_gallery]
+        inputs=youtube_url,
+        outputs=[extract_status, clips_gallery]
     )
 
 # Launch
