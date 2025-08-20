@@ -5,6 +5,7 @@ import json
 import yt_dlp
 import subprocess
 import os
+import re
 from pathlib import Path
 
 # Init Gemini client
@@ -37,9 +38,12 @@ Rules:
 """
 
 # ---- Functions ----
-def analyze_video_with_gemini(youtube_url, num_clips=5, min_dur=5, max_dur=10):
+def analyze_video_with_gemini(youtube_url, num_clips=5, min_dur=5, max_dur=10, custom_system_prompt=None):
     """Step 1: Analyze YouTube video with Gemini to get clip suggestions."""
     global clip_suggestions
+    
+    # Use custom system prompt if provided, otherwise use default
+    system_prompt_to_use = custom_system_prompt.strip() if custom_system_prompt and custom_system_prompt.strip() else SYSTEM_PROMPT
     
     try:
         # Ask Gemini to process the YT video
@@ -47,7 +51,7 @@ def analyze_video_with_gemini(youtube_url, num_clips=5, min_dur=5, max_dur=10):
             model="models/gemini-2.5-flash",
             contents=Content(
                 parts=[
-                    Part(text=SYSTEM_PROMPT),
+                    Part(text=system_prompt_to_use),
                     Part(file_data={"file_uri": youtube_url}),
                     Part(text=f"Extract {num_clips} clips, each {min_dur}-{max_dur} seconds long.")
                 ]
@@ -56,10 +60,26 @@ def analyze_video_with_gemini(youtube_url, num_clips=5, min_dur=5, max_dur=10):
         
         # Parse JSON response
         try:
-            clip_suggestions = json.loads(response.text)
-            return f"✅ Found {len(clip_suggestions)} clip suggestions:\n\n{response.text}"
-        except json.JSONDecodeError:
-            return f"❌ Could not parse JSON response:\n{response.text}"
+            # First try to parse the entire response as JSON
+            try:
+                clip_suggestions = json.loads(response.text)
+                return f"✅ Found {len(clip_suggestions)} clip suggestions:\n\n{response.text}"
+            except json.JSONDecodeError:
+                # If that fails, try to extract JSON array from markdown code blocks
+                json_match = re.search(r'```json\s*(\[.*?\])\s*```', response.text, re.DOTALL)
+                if json_match:
+                    clip_suggestions = json.loads(json_match.group(1))
+                    return f"✅ Found {len(clip_suggestions)} clip suggestions:\n\n{json_match.group(1)}"
+                else:
+                    # Try to find any JSON array in the response
+                    json_match = re.search(r'\[.*\]', response.text, re.DOTALL)
+                    if json_match:
+                        clip_suggestions = json.loads(json_match.group())
+                        return f"✅ Found {len(clip_suggestions)} clip suggestions:\n\n{json_match.group()}"
+                    else:
+                        return f"❌ Could not find JSON array in response:\n{response.text}"
+        except json.JSONDecodeError as e:
+            return f"❌ Could not parse JSON response: {e}\n{response.text}"
             
     except Exception as e:
         return f"Error: {e}"
@@ -97,8 +117,20 @@ def extract_clips(youtube_url):
     
     for i, clip in enumerate(clip_suggestions):
         try:
+            # Convert minutes to seconds if needed
             start_time = clip["start"]
             end_time = clip["end"]
+            
+            # Check if timestamps are in minutes (likely if values are small like 2.21, 3.45)
+            if start_time < 60 and end_time < 60:
+                # Convert minutes to seconds
+                start_time_seconds = start_time * 60
+                end_time_seconds = end_time * 60
+            else:
+                # Already in seconds
+                start_time_seconds = start_time
+                end_time_seconds = end_time
+            
             title = clip.get("title", f"Clip {i+1}")
             
             # Create safe filename
@@ -109,9 +141,9 @@ def extract_clips(youtube_url):
             # Use ffmpeg with re-encoding for precise clip extraction
             cmd = [
                 'ffmpeg', 
-                '-ss', str(start_time),
+                '-ss', str(start_time_seconds),
                 '-i', current_video_path,
-                '-t', str(end_time - start_time),
+                '-t', str(end_time_seconds - start_time_seconds),
                 '-c:v', 'libx264',
                 '-c:a', 'aac',
                 '-preset', 'fast',
@@ -148,6 +180,14 @@ with gr.Blocks() as demo:
         with gr.Column(scale=2):
             youtube_url = gr.Textbox(label="YouTube Video URL")
             
+            # System Prompt Input
+            system_prompt_input = gr.Textbox(
+                label="System Prompt (Optional - Leave empty for default)",
+                placeholder="Enter your custom system prompt here, or leave empty to use the default Zycus-focused prompt...",
+                lines=6,
+                value=""
+            )
+            
             with gr.Row():
                 num_clips = gr.Slider(1, 10, value=5, step=1, label="Number of Clips")
             with gr.Row():
@@ -177,7 +217,7 @@ with gr.Blocks() as demo:
     # Connect functions
     analyze_btn.click(
         analyze_video_with_gemini,
-        inputs=[youtube_url, num_clips, min_dur, max_dur],
+        inputs=[youtube_url, num_clips, min_dur, max_dur, system_prompt_input],
         outputs=analyze_output
     )
     
@@ -189,4 +229,4 @@ with gr.Blocks() as demo:
 
 # Launch
 if __name__ == "__main__":
-    demo.launch()
+    demo.launch(share=True)
