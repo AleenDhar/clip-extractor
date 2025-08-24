@@ -1,0 +1,50 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Deploy to EC2
+      uses: appleboy/ssh-action@v1.0.0
+      with:
+        host: ${{ secrets.EC2_HOST }}
+        username: ${{ secrets.EC2_USERNAME }}
+        key: ${{ secrets.EC2_SSH_KEY }}
+        port: 22
+        script: |
+          # Navigate to app directory (create if doesn't exist)
+          mkdir -p ~/gemini-app
+          cd ~/gemini-app
+          
+          # Clone or pull latest code
+          if [ -d ".git" ]; then
+            git pull origin main
+          else
+            git clone https://github.com/${{ github.repository }} .
+          fi
+          
+          # Create .env file with secrets
+          echo "GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}" > .env
+          echo "GRADIO_SERVER_NAME=0.0.0.0" >> .env
+          echo "GRADIO_SERVER_PORT=7860" >> .env
+          
+          # Stop existing containers
+          docker-compose down || true
+          
+          # Build and start new containers
+          docker-compose up -d --build
+          
+          # Clean up old images
+          docker image prune -f
+          
+          # Show running containers
+          docker ps

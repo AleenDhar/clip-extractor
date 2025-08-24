@@ -1,0 +1,4 @@
+gradio==4.44.0
+google-genai==0.8.0
+yt-dlp==2023.12.30
+pathlib2==2.3.7
